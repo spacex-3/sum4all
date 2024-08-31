@@ -78,6 +78,9 @@ class sum4all(Plugin):
             self.open_ai_api_key = self.keys.get("open_ai_api_key", "")
             self.model = self.keys.get("model", "gpt-3.5-turbo")
             self.open_ai_api_base = self.keys.get("open_ai_api_base", "https://api.openai.com/v1")
+            self.image_sum_open_ai_api_key = self.keys.get("open_ai_api_key", "")
+            self.image_sum_model = self.keys.get("model", "pic")
+            self.image_sum_open_ai_api_base = self.keys.get("open_ai_api_base", "https://api.openai.com/v1")            
             self.xunfei_app_id = self.keys.get("xunfei_app_id", "")
             self.xunfei_api_key = self.keys.get("xunfei_api_key", "")
             self.xunfei_api_secret = self.keys.get("xunfei_api_secret", "")
@@ -785,9 +788,9 @@ class sum4all(Plugin):
         prompt = user_params.get('prompt', self.image_sum_prompt)
 
         if self.image_sum_service == "openai":
-            api_key = self.open_ai_api_key
-            api_base = f"{self.open_ai_api_base}/chat/completions"
-            model = "gpt-4o"
+            api_key = self.image_sum_open_ai_api_key
+            api_base = f"{self.image_sum_open_ai_api_base}/chat/completions"
+            model = self.image_sum_model
         elif self.image_sum_service == "xunfei":
             api_key = self.xunfei_api_key
             api_base = "https://spark.sum4all.site/v1/chat/completions"
