@@ -133,6 +133,12 @@ class sum4all(Plugin):
         content = context.content
         isgroup = e_context["context"].get("isgroup", False)
 
+       # 从配置中获取屏蔽列表
+        blocked_users = self.config.get("blocked_users", [])
+    
+        # 获取发送者的用户名
+        uname = (msg.from_user_nickname if msg.from_user_nickname else user_id) if not isgroup else msg.actual_user_nickname
+        
         #url_match = re.match('https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', content)
         url_match = re.match(r'https?://(?!(support\.weixin\.qq\.com/cgi-bin/mmsupport-bin/addchatroombyinvite))[-\w.]+(?:%[\da-fA-F]{2})+', content)
         #unsupported_urls = re.search(r'.*finder\.video\.qq\.com.*|.*support\.weixin\.qq\.com/update.*|.*support\.weixin\.qq\.com/security.*|.*mp\.weixin\.qq\.com/mp/waerrpage.*', content)
@@ -217,6 +223,12 @@ class sum4all(Plugin):
                 # 群聊中忽略处理图片
                 logger.info("群聊消息，图片处理功能已禁用")
                 return
+            
+            # 判断发送者是否在屏蔽列表中
+            if uname in blocked_users:
+                logger.info(f"用户 {uname} 在屏蔽列表中，忽略图片处理")
+                return
+            
             logger.info("on_handle_context: 开始处理图片")
             context.get("msg").prepare()
             image_path = context.content
