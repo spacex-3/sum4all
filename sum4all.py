@@ -133,7 +133,8 @@ class sum4all(Plugin):
         content = context.content
         isgroup = e_context["context"].get("isgroup", False)
 
-        url_match = re.match('https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', content)
+        #url_match = re.match('https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', content)
+        url_match = re.match(r'https?://(?!(support\.weixin\.qq\.com/cgi-bin/mmsupport-bin/addchatroombyinvite))[-\w.]+(?:%[\da-fA-F]{2})+', content)
         unsupported_urls = re.search(r'.*finder\.video\.qq\.com.*|.*support\.weixin\.qq\.com/update.*|.*support\.weixin\.qq\.com/security.*|.*mp\.weixin\.qq\.com/mp/waerrpage.*', content)
 
             # 检查输入是否以"搜索前缀词" 开头
