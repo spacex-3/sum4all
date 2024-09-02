@@ -53,5 +53,6 @@
     "bibigpt_key": "",
     "outputLanguage": "zh-CN",
     "flomo_key":""
-  }
+  },
+  "blocked_users": ["A", "B", "C"]
 }
