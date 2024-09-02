@@ -135,7 +135,15 @@ class sum4all(Plugin):
 
         #url_match = re.match('https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', content)
         url_match = re.match(r'https?://(?!(support\.weixin\.qq\.com/cgi-bin/mmsupport-bin/addchatroombyinvite))[-\w.]+(?:%[\da-fA-F]{2})+', content)
-        unsupported_urls = re.search(r'.*finder\.video\.qq\.com.*|.*support\.weixin\.qq\.com/update.*|.*support\.weixin\.qq\.com/security.*|.*mp\.weixin\.qq\.com/mp/waerrpage.*', content)
+        #unsupported_urls = re.search(r'.*finder\.video\.qq\.com.*|.*support\.weixin\.qq\.com/update.*|.*support\.weixin\.qq\.com/security.*|.*mp\.weixin\.qq\.com/mp/waerrpage.*', content)
+        unsupported_urls = re.search(
+            r'.*finder\.video\.qq\.com.*|'
+            r'.*support\.weixin\.qq\.com/update.*|'
+            r'.*support\.weixin\.qq\.com/security.*|'
+            r'.*mp\.weixin\.qq\.com/mp/waerrpage.*|'
+            r'.*support\.weixin\.qq\.com/cgi-bin/mmsupport-bin/addchatroombyinvite.*',
+            content
+        )
 
             # 检查输入是否以"搜索前缀词" 开头
         if content.startswith(self.search_sum_search_prefix) and self.search_sum_enabled:
