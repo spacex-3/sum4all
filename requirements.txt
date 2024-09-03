@@ -5,3 +5,4 @@ openpyxl
 beautifulsoup4
 python-pptx
 Pillow
+cos-python-sdk-v5
