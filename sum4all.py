@@ -19,6 +19,7 @@ from pptx import Presentation
 from PIL import Image
 import base64
 import html
+from qcloud_cos import CosConfig, CosS3Client
 
 
 
@@ -61,6 +62,13 @@ class sum4all(Plugin):
             self.params_cache = ExpiredDict(300)
 
             
+            # 提取并设置腾讯云COS的相关配置
+            self.cos_bucket_name = self.config["keys"].get("cos_bucket_name", "")
+            self.cos_region = self.config["keys"].get("cos_region", "")
+            self.cos_secret_id = self.config["keys"].get("cos_secret_id", "")
+            self.cos_secret_key = self.config["keys"].get("cos_secret_key", "")
+
+
             # 从配置中提取所需的设置
             self.keys = self.config.get("keys", {})
             self.url_sum = self.config.get("url_sum", {})
@@ -206,18 +214,23 @@ class sum4all(Plugin):
             if self.file_sum_enabled:
                 # 更新params_cache中的last_file_content
                 self.params_cache[user_id] = {}
-                file_content = self.extract_content(file_path)
-                if file_content is None:
-                    logger.info("文件内容无法提取，跳过处理")
+
+                
+                # 上传文件到腾讯云COS
+                file_url = self.upload_to_cos(file_path)
+                if "error" in file_url:
+                    error_message = file_url.get("error", "未知错误")
+                    logger.error(f"文件上传到COS失败，文件路径: {file_path}, 错误信息: {error_message}")
                 else:
-                    self.params_cache[user_id]['last_file_content'] = file_content
+                    self.params_cache[user_id]['last_file_content'] = file_url
                     logger.info('Updated last_file_content in params_cache for user.')
-                    self.handle_file(file_content, e_context)
+                    self.handle_file(file_url, e_context)
             else:
                 logger.info("文件总结功能已禁用，不对文件内容进行处理")
             # 删除文件
             os.remove(file_path)
-            logger.info(f"文件 {file_path} 已删除")
+            logger.info(f"文件 {file_path} 已删除")       
+
         elif context.type == ContextType.IMAGE:
             if isgroup and not self.image_sum_group:
                 # 群聊中忽略处理图片
@@ -606,13 +619,37 @@ class sum4all(Plugin):
         help_text += "1.Share me the link and I will summarize it for you\n"
         help_text += f"2.{self.search_sum_search_prefix}+query,I will search online for you\n"
         return help_text
+    
+    def upload_to_cos(self, file_path):
+        """将文件上传到腾讯云COS并返回文件URL"""
+        try:
+            config = CosConfig(
+                Region=self.cos_region,
+                SecretId=self.cos_secret_id,
+                SecretKey=self.cos_secret_key
+            )
+            client = CosS3Client(config)
+            
+            file_name = os.path.basename(file_path)
+            response = client.upload_file(
+                Bucket=self.cos_bucket_name,
+                LocalFilePath=file_path,
+                Key=file_name,
+            )
+            
+            url = f"https://{self.cos_bucket_name}.cos.{self.cos_region}.myqcloud.com/{file_name}"
+            return url
+        except Exception as e:
+            return {"error": str(e)}
+
+
     def handle_file(self, content, e_context):
         logger.info("handle_file: 向LLM发送内容总结请求")
         # 根据sum_service的值选择API密钥和基础URL
         if self.file_sum_service == "openai":
             api_key = self.open_ai_api_key
             api_base = self.open_ai_api_base
-            model = self.model
+            model = "gpt-4o"
         elif self.file_sum_service == "sum4all":
             api_key = self.sum4all_key
             api_base = "https://pro.sum4all.site/v1"
@@ -657,11 +694,22 @@ class sum4all(Plugin):
                 ]
             }
             api_url = f"{api_base}/chat/completions"
+
+        # 记录发送给OpenAI的请求内容
+        logger.info(f"handle_file: 发送的请求URL: {api_url}")
+        logger.info(f"handle_file: 发送的请求头: {headers}")
+        logger.info(f"handle_file: 发送的请求数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
         try:
             response = requests.post(api_url, headers=headers, data=json.dumps(data))
             response.raise_for_status()
             response_data = response.json()
             
+            # 记录从OpenAI接收到的响应内容
+            logger.info(f"handle_file: 接收到的响应状态码: {response.status_code}")
+            logger.info(f"handle_file: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+
+
             # 解析 JSON 并获取 content
             if model == "gemini":
                 if "candidates" in response_data and len(response_data["candidates"]) > 0:
@@ -703,90 +751,7 @@ class sum4all(Plugin):
         reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.file_sum_qa_prefix}+问题，可继续追问" 
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
-    def read_pdf(self, file_path):
-        logger.info(f"开始读取PDF文件：{file_path}")
-        doc = fitz.open(file_path)
-        content = ' '.join([page.get_text() for page in doc])
-        logger.info(f"PDF文件读取完成：{file_path}")
 
-        return content
-    def read_word(self, file_path):
-        doc = Document(file_path)
-        return ' '.join([p.text for p in doc.paragraphs])
-    def read_markdown(self, file_path):
-        with open(file_path, 'r', encoding='utf-8') as file:
-            md_content = file.read()
-            return markdown.markdown(md_content)
-    def read_excel(self, file_path):
-        workbook = load_workbook(file_path)
-        content = ''
-        for sheet in workbook:
-            for row in sheet.iter_rows():
-                content += ' '.join([str(cell.value) for cell in row])
-                content += '\n'
-        return content
-    def read_txt(self, file_path):
-        logger.debug(f"开始读取TXT文件: {file_path}")
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-            logger.debug(f"TXT文件读取完成: {file_path}")
-            logger.debug("TXT文件内容的前50个字符：")
-            logger.debug(content[:50])  # 打印文件内容的前50个字符
-            return content
-        except Exception as e:
-            logger.error(f"读取TXT文件时出错: {file_path}，错误信息: {str(e)}")
-            return ""
-    def read_csv(self, file_path):
-        content = ''
-        with open(file_path, 'r', encoding='utf-8') as csvfile:
-            reader = csv.reader(csvfile)
-            for row in reader:
-                content += ' '.join(row) + '\n'
-        return content
-    def read_html(self, file_path):
-        with open(file_path, 'r', encoding='utf-8') as file:
-            soup = BeautifulSoup(file, 'html.parser')
-            return soup.get_text()
-    def read_ppt(self, file_path):
-        presentation = Presentation(file_path)
-        content = ''
-        for slide in presentation.slides:
-            for shape in slide.shapes:
-                if hasattr(shape, "text"):
-                    content += shape.text + '\n'
-        return content
-    def extract_content(self, file_path):
-        logger.info(f"extract_content: 提取文件内容，文件路径: {file_path}")
-        file_size = os.path.getsize(file_path) // 1000  # 将文件大小转换为KB
-        if file_size > int(self.max_file_size):
-            logger.warning(f"文件大小超过限制({self.max_file_size}KB),不进行处理。文件大小: {file_size}KB")
-            return None
-        file_extension = os.path.splitext(file_path)[1][1:].lower()
-        logger.info(f"extract_content: 文件类型为 {file_extension}")
-
-        file_type = EXTENSION_TO_TYPE.get(file_extension)
-
-        if not file_type:
-            logger.error(f"不支持的文件扩展名: {file_extension}")
-            return None
-
-        read_func = {
-            'pdf': self.read_pdf,
-            'docx': self.read_word,
-            'md': self.read_markdown,
-            'txt': self.read_txt,
-            'excel': self.read_excel,
-            'csv': self.read_csv,
-            'html': self.read_html,
-            'ppt': self.read_ppt
-        }.get(file_type)
-
-        if not read_func:
-            logger.error(f"不支持的文件类型: {file_type}")
-            return None
-        logger.info("extract_content: 文件内容提取完成")
-        return read_func(file_path)
     def encode_image_to_base64(self, image_path):
         # 打开图片
         img = Image.open(image_path)
