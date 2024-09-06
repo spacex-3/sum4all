@@ -23,16 +23,7 @@ from qcloud_cos import CosConfig, CosS3Client
 
 
 
-EXTENSION_TO_TYPE = {
-    'pdf': 'pdf',
-    'doc': 'docx', 'docx': 'docx',
-    'md': 'md',
-    'txt': 'txt',
-    'xls': 'excel', 'xlsx': 'excel',
-    'csv': 'csv',
-    'html': 'html', 'htm': 'html',
-    'ppt': 'ppt', 'pptx': 'ppt'
-}
+SUPPORTED_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'epub']
 
 @plugins.register(
     name="sum4all",
@@ -168,35 +159,35 @@ class sum4all(Plugin):
             self.call_service(content, e_context, "search")
             return
         
-        if user_id in self.params_cache and ('last_file_content' in self.params_cache[user_id] or 'last_image_base64' in self.params_cache[user_id] or 'last_url' in self.params_cache[user_id]):
+        if user_id in self.params_cache and ('last_file_url' in self.params_cache[user_id] or 'last_image_url' in self.params_cache[user_id] or 'last_url' in self.params_cache[user_id]):
             # 如果存在最近一次处理的文件路径，触发文件理解函数
-            if 'last_file_content' in self.params_cache[user_id] and content.startswith(self.file_sum_qa_prefix):
+            if 'last_file_url' in self.params_cache[user_id] and content.startswith(self.file_sum_qa_prefix):
                 logger.info('Content starts with the file_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.file_sum_qa_prefix):]
+                new_content = content[len(self.file_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
-                self.handle_file(self.params_cache[user_id]['last_file_content'], e_context)
+                self.handle_file(self.params_cache[user_id]['last_file_url'], e_context)
             # 如果存在最近一次处理的图片路径，触发图片理解函数
-            elif 'last_image_base64' in self.params_cache[user_id] and content.startswith(self.image_sum_qa_prefix):
+            elif 'last_image_url' in self.params_cache[user_id] and content.startswith(self.image_sum_qa_prefix):
                 logger.info('Content starts with the image_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.image_sum_qa_prefix):]
+                new_content = content[len(self.image_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
-                self.handle_image(self.params_cache[user_id]['last_image_base64'], e_context)
+                self.handle_image(self.params_cache[user_id]['last_image_url'], e_context)
 
             # 如果存在最近一次处理的URL，触发URL理解函数
             elif 'last_url' in self.params_cache[user_id] and content.startswith(self.url_sum_qa_prefix):
                 logger.info('Content starts with the url_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.url_sum_qa_prefix):]
+                new_content = content[len(self.url_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
                 self.call_service(self.params_cache[user_id]['last_url'], e_context ,"sum")
             elif 'last_url' in self.params_cache[user_id] and content.startswith(self.note_prefix) and self.note_enabled and not isgroup:
                 logger.info('Content starts with the note_prefix.')
-                new_content = content[len(self.note_prefix):]
+                new_content = content[len(self.note_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
                 self.params_cache[user_id]['note'] = new_content
                 logger.info('params_cache for user has been successfully updated.')  
                 self.call_service(self.params_cache[user_id]['last_url'], e_context, "note")
@@ -205,25 +196,46 @@ class sum4all(Plugin):
                 # 群聊中忽略处理文件
                 logger.info("群聊消息，文件处理功能已禁用")
                 return
-            logger.info("on_handle_context: 处理上下文开始")
+            # 判断发送者是否在屏蔽列表中
+            if uname in blocked_users:
+                logger.info(f"用户 {uname} 在屏蔽列表中，忽略文件处理")
+                return
+            
+            logger.info("on_handle_context: 判断格式并开始上传")
             context.get("msg").prepare()
             file_path = context.content
             logger.info(f"on_handle_context: 获取到文件路径 {file_path}")
             
+            # 获取文件扩展名并检查是否在支持列表中，获取文件大小
+            file_extension = file_path.split('.')[-1].lower()  # 获取文件扩展名并转换为小写
+            file_size = os.path.getsize(file_path) // 1000  # 将文件大小转换为KB
+
+            if file_size > int(self.max_file_size):
+                logger.warning(f"文件大小超过限制({self.max_file_size}KB),不进行处理。文件大小: {file_size}KB")
+                reply = Reply(type=ReplyType.TEXT, content=f"文件大小超过限制({self.max_file_size}KB),不进行处理。文件大小: {file_size}KB")
+                e_context["reply"] = reply
+                e_context.action = EventAction.BREAK_PASS
+                return
+
+            if file_extension not in SUPPORTED_EXTENSIONS:
+                reply = Reply(type=ReplyType.TEXT, content=f"不支持的文件格式，目前仅支持以下格式的文档解析: {', '.join(SUPPORTED_EXTENSIONS)}")
+                e_context["reply"] = reply
+                e_context.action = EventAction.BREAK_PASS
+                return
+
             # 检查是否应该进行文件总结
             if self.file_sum_enabled:
-                # 更新params_cache中的last_file_content
+                # 更新params_cache中的last_file_url
                 self.params_cache[user_id] = {}
 
-                
                 # 上传文件到腾讯云COS
                 file_url = self.upload_to_cos(file_path)
                 if "error" in file_url:
                     error_message = file_url.get("error", "未知错误")
                     logger.error(f"文件上传到COS失败，文件路径: {file_path}, 错误信息: {error_message}")
                 else:
-                    self.params_cache[user_id]['last_file_content'] = file_url
-                    logger.info('Updated last_file_content in params_cache for user.')
+                    self.params_cache[user_id]['last_file_url'] = file_url
+                    logger.info('Updated last_file_url in params_cache for user.')
                     self.handle_file(file_url, e_context)
             else:
                 logger.info("文件总结功能已禁用，不对文件内容进行处理")
@@ -250,13 +262,27 @@ class sum4all(Plugin):
             
             # 检查是否应该进行图片总结
             if self.image_sum_enabled:
-                # 将图片路径转换为Base64编码的字符串
-                base64_image = self.encode_image_to_base64(image_path)
-                # 更新params_cache中的last_image_path
                 self.params_cache[user_id] = {}
-                self.params_cache[user_id]['last_image_base64'] = base64_image
-                logger.info('Updated last_image_base64 in params_cache for user.')
-                self.handle_image(base64_image, e_context)
+                # 上传文件到腾讯云COS
+                image_url = self.upload_to_cos(image_path)
+                self.params_cache[user_id]['last_image_url'] = image_url
+                if "error" in image_url:
+                    error_message = image_url.get("error", "未知错误")
+                    logger.error(f"图片上传到COS失败，文件路径: {file_path}, 错误信息: {error_message}")
+                else:
+                    
+                    self.params_cache[user_id]['last_image_url'] = image_url
+                    logger.info('Updated last_image_url in params_cache for user.')
+                    self.handle_image(image_url, e_context)
+
+
+                # # 将图片路径转换为Base64编码的字符串
+                # base64_image = self.encode_image_to_base64(image_path)
+                # # 更新params_cache中的last_image_path
+                # self.params_cache[user_id] = {}
+                # self.params_cache[user_id]['last_image_base64'] = base64_image
+                # logger.info('Updated last_image_base64 in params_cache for user.')
+                # self.handle_image(base64_image, e_context)
 
             else:
                 logger.info("图片总结功能已禁用，不对图片内容进行处理")
@@ -744,7 +770,7 @@ class sum4all(Plugin):
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error calling LLM API: {e}")
-            reply_content = f"An error occurred while calling LLM API"
+            reply_content = f"OpenAI返回出现错误，文件已上传，请尝试重新输入“问”进行提问。"
 
         reply = Reply()
         reply.type = ReplyType.TEXT
@@ -752,22 +778,22 @@ class sum4all(Plugin):
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
 
-    def encode_image_to_base64(self, image_path):
-        # 打开图片
-        img = Image.open(image_path)
-        # 只有当图片的宽度大于1024像素时，才调整图片大小
-        if img.width > 1024:
-            img = img.resize((1024, int(img.height*1024/img.width)))
-            # 将调整大小后的图片保存回原文件
-            img.save(image_path)
+    # def encode_image_to_base64(self, image_path):
+    #     # 打开图片
+    #     img = Image.open(image_path)
+    #     # 只有当图片的宽度大于1024像素时，才调整图片大小
+    #     if img.width > 1024:
+    #         img = img.resize((1024, int(img.height*1024/img.width)))
+    #         # 将调整大小后的图片保存回原文件
+    #         img.save(image_path)
 
-        # 打开调整大小后的图片，读取并进行base64编码
-        with open(image_path, "rb") as image_file:
-            encoded = base64.b64encode(image_file.read()).decode('utf-8')
-        return encoded
+    #     # 打开调整大小后的图片，读取并进行base64编码
+    #     with open(image_path, "rb") as image_file:
+    #         encoded = base64.b64encode(image_file.read()).decode('utf-8')
+    #     return encoded
     # Function to handle OpenAI image processing
-    def handle_image(self, base64_image, e_context):
-        logger.info("handle_image: 解析图像处理API的响应")
+    def handle_image(self, content, e_context):
+        logger.info("handle_image: 解析图像处理url的响应")
         msg: ChatMessage = e_context["context"]["msg"]
         user_id = msg.from_user_id
         user_params = self.params_cache.get(user_id, {})
@@ -815,61 +841,100 @@ class sum4all(Plugin):
             return
 
         if self.image_sum_service != "gemini":
-            payload = {
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}'
+            }
+            data = {
                 "model": model,
                 "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "max_tokens": 3000
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": content}
+                ]
             }
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
+            api_url = f"{api_base}"
+
+        # 记录发送给OpenAI的请求内容
+        logger.info(f"handle_image: 发送的请求URL: {api_url}")
+        logger.info(f"handle_image: 发送的请求头: {headers}")
+        logger.info(f"handle_image: 发送的请求数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
 
         try:
-            response = requests.post(api_base, headers=headers, json=payload)
+            response = requests.post(api_url, headers=headers, data=json.dumps(data))
             response.raise_for_status()
-            response_json = response.json()
+            response_data = response.json()
+            
+            # 记录从OpenAI接收到的响应内容
+            logger.info(f"handle_image: 接收到的响应状态码: {response.status_code}")
+            logger.info(f"handle_image: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
 
-            if self.image_sum_service == "gemini":
-                reply_content = response_json.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'No text found in the response')
+            # 解析 JSON 并获取 content
+            if model == "gemini":
+                if "candidates" in response_data and len(response_data["candidates"]) > 0:
+                    first_candidate = response_data["candidates"][0]
+                    if "content" in first_candidate:
+                        if "parts" in first_candidate["content"] and len(first_candidate["content"]["parts"]) > 0:
+                            response_content = first_candidate["content"]["parts"][0]["text"].strip()  # 获取响应内容
+                            logger.info(f"Gemini API response content: {response_content}")  # 记录响应内容
+                            reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
+                        else:
+                            logger.error("Parts not found in the Gemini API response content")
+                            reply_content = "Parts not found in the Gemini API response content"
+                    else:
+                        logger.error("Content not found in the Gemini API response candidate")
+                        reply_content = "Content not found in the Gemini API response candidate"
+                else:
+                    logger.error("No candidates available in the Gemini API response")
+                    reply_content = "No candidates available in the Gemini API response"        
             else:
-                if "choices" in response_json and len(response_json["choices"]) > 0:
-                    first_choice = response_json["choices"][0]
+                if "choices" in response_data and len(response_data["choices"]) > 0:
+                    first_choice = response_data["choices"][0]
                     if "message" in first_choice and "content" in first_choice["message"]:
-                        response_content = first_choice["message"]["content"].strip()
-                        logger.info("LLM API response content")
-                        reply_content = response_content
+                        response_content = first_choice["message"]["content"].strip()  # 获取响应内容
+                        logger.info(f"LLM API response content")  # 记录响应内容
+                        reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
                     else:
                         logger.error("Content not found in the response")
                         reply_content = "Content not found in the LLM API response"
                 else:
                     logger.error("No choices available in the response")
                     reply_content = "No choices available in the LLM API response"
-        except Exception as e:
-            logger.error(f"Error processing LLM API response: {e}")
-            reply_content = f"An error occurred while processing LLM API response"
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error calling LLM API: {e}")
+            reply_content = f"OpenAI返回出现错误，图片已上传，请尝试重新输入“问”进行提问。"
 
         reply = Reply()
         reply.type = ReplyType.TEXT
-        reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.image_sum_qa_prefix}+问题，可继续追问"
+        reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.image_sum_qa_prefix}+问题，可继续追问" 
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
+
+
+        #     if self.image_sum_service == "gemini":
+        #         reply_content = response_json.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'No text found in the response')
+        #     else:
+        #         if "choices" in response_json and len(response_json["choices"]) > 0:
+        #             first_choice = response_json["choices"][0]
+        #             if "message" in first_choice and "content" in first_choice["message"]:
+        #                 response_content = first_choice["message"]["content"].strip()
+        #                 logger.info("LLM API response content")
+        #                 reply_content = response_content
+        #             else:
+        #                 logger.error("Content not found in the response")
+        #                 reply_content = "Content not found in the LLM API response"
+        #         else:
+        #             logger.error("No choices available in the response")
+        #             reply_content = "No choices available in the LLM API response"
+        # except Exception as e:
+        #     logger.error(f"Error processing LLM API response: {e}")
+        #     reply_content = f"An error occurred while processing LLM API response"
+
+        # reply = Reply()
+        # reply.type = ReplyType.TEXT
+        # reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.image_sum_qa_prefix}+问题，可继续追问"
+        # e_context["reply"] = reply
+        # e_context.action = EventAction.BREAK_PASS
     
 def remove_markdown(text):
     # 替换Markdown的粗体标记
