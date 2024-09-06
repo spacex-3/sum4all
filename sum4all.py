@@ -726,51 +726,58 @@ class sum4all(Plugin):
         logger.info(f"handle_file: 发送的请求头: {headers}")
         logger.info(f"handle_file: 发送的请求数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
 
-        try:
-            response = requests.post(api_url, headers=headers, data=json.dumps(data))
-            response.raise_for_status()
-            response_data = response.json()
-            
-            # 记录从OpenAI接收到的响应内容
-            logger.info(f"handle_file: 接收到的响应状态码: {response.status_code}")
-            logger.info(f"handle_file: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+        # 设置重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
+
+            try:
+                response = requests.post(api_url, headers=headers, data=json.dumps(data))
+                response.raise_for_status()
+                response_data = response.json()
+                
+                # 记录从OpenAI接收到的响应内容
+                logger.info(f"handle_file: 接收到的响应状态码: {response.status_code}")
+                logger.info(f"handle_file: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
 
 
-            # 解析 JSON 并获取 content
-            if model == "gemini":
-                if "candidates" in response_data and len(response_data["candidates"]) > 0:
-                    first_candidate = response_data["candidates"][0]
-                    if "content" in first_candidate:
-                        if "parts" in first_candidate["content"] and len(first_candidate["content"]["parts"]) > 0:
-                            response_content = first_candidate["content"]["parts"][0]["text"].strip()  # 获取响应内容
-                            logger.info(f"Gemini API response content: {response_content}")  # 记录响应内容
+                # 解析 JSON 并获取 content
+                if model == "gemini":
+                    if "candidates" in response_data and len(response_data["candidates"]) > 0:
+                        first_candidate = response_data["candidates"][0]
+                        if "content" in first_candidate:
+                            if "parts" in first_candidate["content"] and len(first_candidate["content"]["parts"]) > 0:
+                                response_content = first_candidate["content"]["parts"][0]["text"].strip()  # 获取响应内容
+                                logger.info(f"Gemini API response content: {response_content}")  # 记录响应内容
+                                reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
+                            else:
+                                logger.error("Parts not found in the Gemini API response content")
+                                reply_content = "Parts not found in the Gemini API response content"
+                        else:
+                            logger.error("Content not found in the Gemini API response candidate")
+                            reply_content = "Content not found in the Gemini API response candidate"
+                    else:
+                        logger.error("No candidates available in the Gemini API response")
+                        reply_content = "No candidates available in the Gemini API response"        
+                else:
+                    if "choices" in response_data and len(response_data["choices"]) > 0:
+                        first_choice = response_data["choices"][0]
+                        if "message" in first_choice and "content" in first_choice["message"]:
+                            response_content = first_choice["message"]["content"].strip()  # 获取响应内容
+                            logger.info(f"LLM API response content")  # 记录响应内容
                             reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
                         else:
-                            logger.error("Parts not found in the Gemini API response content")
-                            reply_content = "Parts not found in the Gemini API response content"
+                            logger.error("Content not found in the response")
+                            reply_content = "Content not found in the LLM API response"
                     else:
-                        logger.error("Content not found in the Gemini API response candidate")
-                        reply_content = "Content not found in the Gemini API response candidate"
-                else:
-                    logger.error("No candidates available in the Gemini API response")
-                    reply_content = "No candidates available in the Gemini API response"        
-            else:
-                if "choices" in response_data and len(response_data["choices"]) > 0:
-                    first_choice = response_data["choices"][0]
-                    if "message" in first_choice and "content" in first_choice["message"]:
-                        response_content = first_choice["message"]["content"].strip()  # 获取响应内容
-                        logger.info(f"LLM API response content")  # 记录响应内容
-                        reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
-                    else:
-                        logger.error("Content not found in the response")
-                        reply_content = "Content not found in the LLM API response"
-                else:
-                    logger.error("No choices available in the response")
-                    reply_content = "No choices available in the LLM API response"
+                        logger.error("No choices available in the response")
+                        reply_content = "No choices available in the LLM API response"
+                break  # 如果成功，跳出循环
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling LLM API: {e}")
-            reply_content = f"OpenAI返回出现错误，文件已上传，请尝试重新输入“问”进行提问。"
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error calling LLM API on attempt {attempt + 1}/{max_retries}: {e}")
+                if attempt == max_retries - 1:
+                    reply_content = "OpenAI返回出现错误，文件已上传，请尝试重新输入“问”进行提问。"
+
 
         reply = Reply()
         reply.type = ReplyType.TEXT
@@ -859,50 +866,57 @@ class sum4all(Plugin):
         logger.info(f"handle_image: 发送的请求头: {headers}")
         logger.info(f"handle_image: 发送的请求数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
 
-        try:
-            response = requests.post(api_url, headers=headers, data=json.dumps(data))
-            response.raise_for_status()
-            response_data = response.json()
-            
-            # 记录从OpenAI接收到的响应内容
-            logger.info(f"handle_image: 接收到的响应状态码: {response.status_code}")
-            logger.info(f"handle_image: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+        # 设置重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
 
-            # 解析 JSON 并获取 content
-            if model == "gemini":
-                if "candidates" in response_data and len(response_data["candidates"]) > 0:
-                    first_candidate = response_data["candidates"][0]
-                    if "content" in first_candidate:
-                        if "parts" in first_candidate["content"] and len(first_candidate["content"]["parts"]) > 0:
-                            response_content = first_candidate["content"]["parts"][0]["text"].strip()  # 获取响应内容
-                            logger.info(f"Gemini API response content: {response_content}")  # 记录响应内容
+            try:
+                response = requests.post(api_url, headers=headers, data=json.dumps(data))
+                response.raise_for_status()
+                response_data = response.json()
+                
+                # 记录从OpenAI接收到的响应内容
+                logger.info(f"handle_image: 接收到的响应状态码: {response.status_code}")
+                logger.info(f"handle_image: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+
+                # 解析 JSON 并获取 content
+                if model == "gemini":
+                    if "candidates" in response_data and len(response_data["candidates"]) > 0:
+                        first_candidate = response_data["candidates"][0]
+                        if "content" in first_candidate:
+                            if "parts" in first_candidate["content"] and len(first_candidate["content"]["parts"]) > 0:
+                                response_content = first_candidate["content"]["parts"][0]["text"].strip()  # 获取响应内容
+                                logger.info(f"Gemini API response content: {response_content}")  # 记录响应内容
+                                reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
+                            else:
+                                logger.error("Parts not found in the Gemini API response content")
+                                reply_content = "Parts not found in the Gemini API response content"
+                        else:
+                            logger.error("Content not found in the Gemini API response candidate")
+                            reply_content = "Content not found in the Gemini API response candidate"
+                    else:
+                        logger.error("No candidates available in the Gemini API response")
+                        reply_content = "No candidates available in the Gemini API response"        
+                else:
+                    if "choices" in response_data and len(response_data["choices"]) > 0:
+                        first_choice = response_data["choices"][0]
+                        if "message" in first_choice and "content" in first_choice["message"]:
+                            response_content = first_choice["message"]["content"].strip()  # 获取响应内容
+                            logger.info(f"LLM API response content")  # 记录响应内容
                             reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
                         else:
-                            logger.error("Parts not found in the Gemini API response content")
-                            reply_content = "Parts not found in the Gemini API response content"
+                            logger.error("Content not found in the response")
+                            reply_content = "Content not found in the LLM API response"
                     else:
-                        logger.error("Content not found in the Gemini API response candidate")
-                        reply_content = "Content not found in the Gemini API response candidate"
-                else:
-                    logger.error("No candidates available in the Gemini API response")
-                    reply_content = "No candidates available in the Gemini API response"        
-            else:
-                if "choices" in response_data and len(response_data["choices"]) > 0:
-                    first_choice = response_data["choices"][0]
-                    if "message" in first_choice and "content" in first_choice["message"]:
-                        response_content = first_choice["message"]["content"].strip()  # 获取响应内容
-                        logger.info(f"LLM API response content")  # 记录响应内容
-                        reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
-                    else:
-                        logger.error("Content not found in the response")
-                        reply_content = "Content not found in the LLM API response"
-                else:
-                    logger.error("No choices available in the response")
-                    reply_content = "No choices available in the LLM API response"
+                        logger.error("No choices available in the response")
+                        reply_content = "No choices available in the LLM API response"
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling LLM API: {e}")
-            reply_content = f"OpenAI返回出现错误，图片已上传，请尝试重新输入“问”进行提问。"
+                break  # 如果成功，跳出循环
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error calling LLM API on attempt {attempt + 1}/{max_retries}: {e}")
+                if attempt == max_retries - 1:
+                    reply_content = "OpenAI返回出现错误，图片已上传，请尝试重新输入“问”进行提问。"
 
         reply = Reply()
         reply.type = ReplyType.TEXT
