@@ -175,7 +175,7 @@ class sum4all(Plugin):
             if 'last_file_url' in self.params_cache[user_id] and content.startswith(self.file_sum_qa_prefix):
                 logger.info('Content starts with the file_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.file_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
+                new_content = content[len(self.file_sum_qa_prefix):] + "。上述问题都是基于文件内容提问，请解析文件并请用中文回答。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
                 self.handle_file(self.params_cache[user_id]['last_file_url'], e_context)
@@ -192,13 +192,13 @@ class sum4all(Plugin):
             elif 'last_url' in self.params_cache[user_id] and content.startswith(self.url_sum_qa_prefix):
                 logger.info('Content starts with the url_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.url_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
+                new_content = content[len(self.url_sum_qa_prefix):] + "。请根据内容并请用中文回答。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
                 self.call_service(self.params_cache[user_id]['last_url'], e_context ,"sum")
             elif 'last_url' in self.params_cache[user_id] and content.startswith(self.note_prefix) and self.note_enabled and not isgroup:
                 logger.info('Content starts with the note_prefix.')
-                new_content = content[len(self.note_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
+                new_content = content[len(self.note_prefix):] + "。请根据内容并请用中文回答。"
                 self.params_cache[user_id]['note'] = new_content
                 logger.info('params_cache for user has been successfully updated.')  
                 self.call_service(self.params_cache[user_id]['last_url'], e_context, "note")
@@ -307,7 +307,7 @@ class sum4all(Plugin):
                     return
                 else:  ##私聊回复不支持
                     logger.info("[sum4all] Unsupported URL : %s", content)
-                    reply = Reply(type=ReplyType.TEXT, content="不支持总结小程序和视频号")
+                    reply = Reply(type=ReplyType.TEXT, content="不支持总结小程序和视频号和您当前发送的网址")
                     e_context["reply"] = reply
                     e_context.action = EventAction.BREAK_PASS
             else:  #匹配支持总结的卡片
@@ -334,7 +334,7 @@ class sum4all(Plugin):
         elif url_match and self.url_sum_enabled: #匹配URL链接
             if unsupported_urls:  #匹配不支持总结的网址
                 logger.info("[sum4all] Unsupported URL : %s", content)
-                reply = Reply(type=ReplyType.TEXT, content="不支持总结小程序和视频号")
+                reply = Reply(type=ReplyType.TEXT, content="不支持总结小程序和视频号和您当前发送的网址")
                 e_context["reply"] = reply
                 e_context.action = EventAction.BREAK_PASS
             else:
@@ -428,52 +428,132 @@ class sum4all(Plugin):
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {api_key}'
         }
-        payload = json.dumps({
-            "link": content,
-            "prompt": prompt,
+        # payload = json.dumps({
+        #     "link": content,
+        #     "prompt": prompt,
+        #     "model": model,
+        #     "base": api_base
+        # })
+        data = {
             "model": model,
-            "base": api_base
-        })
-        additional_content = ""  # 在 try 块之前初始化 additional_content
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": content}
+            ]
+        }
+        # additional_content = ""  # 在 try 块之前初始化 additional_content。meta数据是什么？？
+        api_url = f"{api_base}/chat/completions"
 
-        try:
-            logger.info('Sending request to LLM...')
-            api_url = "https://ai.sum4all.site"
-            response = requests.post(api_url, headers=headers, data=payload)
-            response.raise_for_status()
-            logger.info('Received response from LLM.')
-            response_data = response.json()  # 解析响应的 JSON 数据
-            if response_data.get("success"):
-                content = response_data["content"].replace("\\n", "\n")  # 替换 \\n 为 \n
-                self.params_cache[user_id]['content'] = content
+        # 记录发送给OpenAI的请求内容
+        logger.info(f"handle_url: 发送的请求URL: {api_url}")
+        logger.info(f"handle_url: 发送的请求头: {headers}")
+        logger.info(f"handle_url: 发送的请求数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
 
-                # 新增加的部分，用于解析 meta 数据
-                meta = response_data.get("meta", {})  # 如果没有 meta 数据，则默认为空字典
-                title = meta.get("og:title", "")  # 获取 og:title，如果没有则默认为空字符串
-                self.params_cache[user_id]['title'] = title
-                # 只有当 title 非空时，才加入到回复中
-                if title:
-                    additional_content += f"{title}\n\n"
-                reply_content = additional_content + content  # 将内容加入回复
+        # 设置重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
+
+            try:
+                response = requests.post(api_url, headers=headers, data=json.dumps(data))
+                response.raise_for_status()
+                response_data = response.json()
                 
-            else:
-                reply_content = "Content not found or error in response"
+                # 记录从OpenAI接收到的响应内容
+                logger.info(f"handle_url: 接收到的响应状态码: {response.status_code}")
+                logger.info(f"handle_url: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
 
-        except requests.exceptions.RequestException as e:
-            # 处理可能出现的错误
-            logger.error(f"Error calling new combined api: {e}")
-            reply_content = f"An error occurred"
+
+                # 解析 JSON 并获取 content
+                if model == "gemini":
+                    if "candidates" in response_data and len(response_data["candidates"]) > 0:
+                        first_candidate = response_data["candidates"][0]
+                        if "content" in first_candidate:
+                            if "parts" in first_candidate["content"] and len(first_candidate["content"]["parts"]) > 0:
+                                response_content = first_candidate["content"]["parts"][0]["text"].strip()  # 获取响应内容
+                                logger.info(f"Gemini API response content: {response_content}")  # 记录响应内容
+                                reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
+                            else:
+                                logger.error("Parts not found in the Gemini API response content")
+                                reply_content = "Parts not found in the Gemini API response content"
+                        else:
+                            logger.error("Content not found in the Gemini API response candidate")
+                            reply_content = "Content not found in the Gemini API response candidate"
+                    else:
+                        logger.error("No candidates available in the Gemini API response")
+                        reply_content = "No candidates available in the Gemini API response"        
+                else:
+                    if "choices" in response_data and len(response_data["choices"]) > 0:
+                        first_choice = response_data["choices"][0]
+                        if "message" in first_choice and "content" in first_choice["message"]:
+                            response_content = first_choice["message"]["content"].strip()  # 获取响应内容
+                            logger.info(f"LLM API response content")  # 记录响应内容
+                            reply_content = response_content.replace("\\n", "\n")  # 替换 \\n 为 \n
+                        else:
+                            logger.error("Content not found in the response")
+                            reply_content = "Content not found in the LLM API response"
+                    else:
+                        logger.error("No choices available in the response")
+                        reply_content = "No choices available in the LLM API response"
+                break  # 如果成功，跳出循环
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error calling LLM API on attempt {attempt + 1}/{max_retries}: {e}")
+                if attempt == max_retries - 1:
+                    reply_content = "OpenAI返回出现错误，请尝试重新输入“问”进行提问。"
+
 
         reply = Reply()
         reply.type = ReplyType.TEXT
-        if not self.url_sum_qa_enabled:
-            reply.content = remove_markdown(reply_content)
-        elif isgroup or not self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
-        elif self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问。\n\n📒输入{self.note_prefix}+笔记，可发送当前总结&笔记到{self.note_service}"
+        reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.file_sum_qa_prefix}+问题，可继续追问" 
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
+
+
+
+        # try:
+        #     logger.info('Sending request to LLM...')
+        #     # response = requests.post(api_url, headers=headers, data=payload)
+        #     response = requests.post(api_url, headers=headers, data=json.dumps(data))
+
+        #     # 记录从OpenAI接收到的响应内容
+        #     logger.info(f"handle_url: 接收到的响应状态码: {response.status_code}")
+        #     logger.info(f"handle_url: 接收到的响应数据: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+
+        #     response.raise_for_status()
+        #     logger.info('Received response from LLM.')
+        #     response_data = response.json()  # 解析响应的 JSON 数据
+        #     if response_data.get("success"):
+        #         content = response_data["content"].replace("\\n", "\n")  # 替换 \\n 为 \n
+        #         self.params_cache[user_id]['content'] = content
+
+        #         # 新增加的部分，用于解析 meta 数据
+        #         meta = response_data.get("meta", {})  # 如果没有 meta 数据，则默认为空字典
+        #         title = meta.get("og:title", "")  # 获取 og:title，如果没有则默认为空字符串
+        #         self.params_cache[user_id]['title'] = title
+        #         # 只有当 title 非空时，才加入到回复中
+        #         if title:
+        #             additional_content += f"{title}\n\n"
+        #         reply_content = additional_content + content  # 将内容加入回复
+                
+        #     else:
+        #         reply_content = "Content not found or error in response"
+
+        # except requests.exceptions.RequestException as e:
+        #     # 处理可能出现的错误
+        #     logger.error(f"Error calling new combined api: {e}")
+        #     reply_content = f"An error occurred"
+
+        # reply = Reply()
+        # reply.type = ReplyType.TEXT
+        # if not self.url_sum_qa_enabled:
+        #     reply.content = remove_markdown(reply_content)
+        # elif isgroup or not self.note_enabled:
+        #     reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
+        # elif self.note_enabled:
+        #     reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问。\n\n📒输入{self.note_prefix}+笔记，可发送当前总结&笔记到{self.note_service}"
+        # e_context["reply"] = reply
+        # e_context.action = EventAction.BREAK_PASS
+
     def handle_bibigpt(self, content, e_context):    
         headers = {
             'Content-Type': 'application/json'
@@ -686,7 +766,7 @@ class sum4all(Plugin):
         if self.file_sum_service == "openai":
             api_key = self.open_ai_api_key
             api_base = self.open_ai_api_base
-            model = "gpt-4o"
+            model = self.model
         elif self.file_sum_service == "sum4all":
             api_key = self.sum4all_key
             api_base = "https://pro.sum4all.site/v1"
@@ -935,31 +1015,6 @@ class sum4all(Plugin):
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
 
-
-        #     if self.image_sum_service == "gemini":
-        #         reply_content = response_json.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'No text found in the response')
-        #     else:
-        #         if "choices" in response_json and len(response_json["choices"]) > 0:
-        #             first_choice = response_json["choices"][0]
-        #             if "message" in first_choice and "content" in first_choice["message"]:
-        #                 response_content = first_choice["message"]["content"].strip()
-        #                 logger.info("LLM API response content")
-        #                 reply_content = response_content
-        #             else:
-        #                 logger.error("Content not found in the response")
-        #                 reply_content = "Content not found in the LLM API response"
-        #         else:
-        #             logger.error("No choices available in the response")
-        #             reply_content = "No choices available in the LLM API response"
-        # except Exception as e:
-        #     logger.error(f"Error processing LLM API response: {e}")
-        #     reply_content = f"An error occurred while processing LLM API response"
-
-        # reply = Reply()
-        # reply.type = ReplyType.TEXT
-        # reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.image_sum_qa_prefix}+问题，可继续追问"
-        # e_context["reply"] = reply
-        # e_context.action = EventAction.BREAK_PASS
     
 def remove_markdown(text):
     # 替换Markdown的粗体标记
