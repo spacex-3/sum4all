@@ -141,12 +141,23 @@ class sum4all(Plugin):
         #url_match = re.match('https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', content)
         url_match = re.match(r'https?://(?!(support\.weixin\.qq\.com/cgi-bin/mmsupport-bin/addchatroombyinvite))[-\w.]+(?:%[\da-fA-F]{2})+', content)
         #unsupported_urls = re.search(r'.*finder\.video\.qq\.com.*|.*support\.weixin\.qq\.com/update.*|.*support\.weixin\.qq\.com/security.*|.*mp\.weixin\.qq\.com/mp/waerrpage.*', content)
+
         unsupported_urls = re.search(
             r'.*finder\.video\.qq\.com.*|'
             r'.*support\.weixin\.qq\.com/update.*|'
             r'.*support\.weixin\.qq\.com/security.*|'
             r'.*mp\.weixin\.qq\.com/mp/waerrpage.*|'
-            r'.*support\.weixin\.qq\.com/cgi-bin/mmsupport-bin/addchatroombyinvite.*',
+            r'.*support\.weixin\.qq\.com/cgi-bin/mmsupport-bin/addchatroombyinvite.*|'
+            r'.*weibo\.com.*|'
+            r'.*xiaohongshu\.com.*|'
+            r'.*yangkeduo\.com.*|'
+            r'.*pinduoduo\.com.*|'
+            r'.*dianping\.com.*|'
+            r'.*meituan\.com.*|'
+            r'.*baidu\.com.*|'
+            r'.*amap\.com.*|'
+            r'.*taobao\.com.*|'
+            r'.*tmall\.com.*',
             content
         )
 
