@@ -20,10 +20,10 @@ from PIL import Image
 import base64
 import html
 from qcloud_cos import CosConfig, CosS3Client
+from bs4 import BeautifulSoup
 
 
-
-SUPPORTED_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'epub']
+SUPPORTED_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'epub', 'html', 'htm', 'zip']
 
 @plugins.register(
     name="sum4all",
@@ -157,6 +157,8 @@ class sum4all(Plugin):
             r'.*baidu\.com.*|'
             r'.*amap\.com.*|'
             r'.*taobao\.com.*|'
+            r'.*y\.qq\.com.*|'
+            r'.*hupu\.com.*|'
             r'.*tmall\.com.*',
             content
         )
@@ -175,7 +177,7 @@ class sum4all(Plugin):
             if 'last_file_url' in self.params_cache[user_id] and content.startswith(self.file_sum_qa_prefix):
                 logger.info('Content starts with the file_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.file_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
+                new_content = content[len(self.file_sum_qa_prefix):] + "。上述问题都是基于文档内容提问，请解析文档并请用中文回答。请不要输出分析过程，直接把我要的结果按照格式返回。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
                 self.handle_file(self.params_cache[user_id]['last_file_url'], e_context)
@@ -183,7 +185,7 @@ class sum4all(Plugin):
             elif 'last_image_url' in self.params_cache[user_id] and content.startswith(self.image_sum_qa_prefix):
                 logger.info('Content starts with the image_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.image_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
+                new_content = content[len(self.image_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。请不要输出分析过程，直接把我要的结果按照格式返回。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
                 self.handle_image(self.params_cache[user_id]['last_image_url'], e_context)
@@ -192,13 +194,13 @@ class sum4all(Plugin):
             elif 'last_url' in self.params_cache[user_id] and content.startswith(self.url_sum_qa_prefix):
                 logger.info('Content starts with the url_sum_qa_prefix.')
                 # 去除关键词和紧随其后的空格
-                new_content = content[len(self.url_sum_qa_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
+                new_content = content[len(self.url_sum_qa_prefix):] + "。上述问题都是基于文档内容提问，请解析文档并请用中文回答。请不要输出分析过程，直接把我要的结果按照格式返回。"
                 self.params_cache[user_id]['prompt'] = new_content
                 logger.info('params_cache for user has been successfully updated.')            
                 self.call_service(self.params_cache[user_id]['last_url'], e_context ,"sum")
             elif 'last_url' in self.params_cache[user_id] and content.startswith(self.note_prefix) and self.note_enabled and not isgroup:
                 logger.info('Content starts with the note_prefix.')
-                new_content = content[len(self.note_prefix):] + "。上述问题都是基于图片内容提问，请解析图片并请用中文回答。"
+                new_content = content[len(self.note_prefix):] + "。上述问题都是基于文档内容提问，请解析文档并请用中文回答。请不要输出分析过程，直接把我要的结果按照格式返回。"
                 self.params_cache[user_id]['note'] = new_content
                 logger.info('params_cache for user has been successfully updated.')  
                 self.call_service(self.params_cache[user_id]['last_url'], e_context, "note")
@@ -307,7 +309,7 @@ class sum4all(Plugin):
                     return
                 else:  ##私聊回复不支持
                     logger.info("[sum4all] Unsupported URL : %s", content)
-                    reply = Reply(type=ReplyType.TEXT, content="不支持总结小程序和视频号")
+                    reply = Reply(type=ReplyType.TEXT, content="不支持总结小程序和视频号和您当前发送的网页（可能需要登陆）")
                     e_context["reply"] = reply
                     e_context.action = EventAction.BREAK_PASS
             else:  #匹配支持总结的卡片
@@ -462,7 +464,7 @@ class sum4all(Plugin):
         except requests.exceptions.RequestException as e:
             # 处理可能出现的错误
             logger.error(f"Error calling new combined api: {e}")
-            reply_content = f"An error occurred"
+            reply_content = f"An error occurred: {e}"
 
         reply = Reply()
         reply.type = ReplyType.TEXT
@@ -686,7 +688,7 @@ class sum4all(Plugin):
         if self.file_sum_service == "openai":
             api_key = self.open_ai_api_key
             api_base = self.open_ai_api_base
-            model = "gpt-4o"
+            model = self.image_sum_model
         elif self.file_sum_service == "sum4all":
             api_key = self.sum4all_key
             api_base = "https://pro.sum4all.site/v1"
@@ -961,9 +963,42 @@ class sum4all(Plugin):
         # e_context["reply"] = reply
         # e_context.action = EventAction.BREAK_PASS
     
+
+import re
+
 def remove_markdown(text):
     # 替换Markdown的粗体标记
     text = text.replace("**", "")
+    
     # 替换Markdown的标题标记
     text = text.replace("### ", "").replace("## ", "").replace("# ", "")
-    return text
+    
+    # 删除第一个 ``` 和最后一个 ``` 之间的内容
+    start = text.find("```")
+    end = text.rfind("```")
+    
+    # 确保找到的start和end是有效的，并且end在start之后
+    if start != -1 and end != -1 and end > start:
+        # 保留start之前的内容和end之后的内容
+        text = text[:start] + text[end + 3:]  # end+3 是为了跳过最后一个```
+
+    # 分行处理，删除以"> retrieving file"开头或包含"ok ✅"的行
+    lines = text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        # 如果行以"> retrieving file"开头或者包含"ok ✅"，跳过
+        if not (line.startswith("> retrieving file") or "ok ✅" in line):
+            cleaned_lines.append(line)
+    
+    # 将清理后的行重新拼接成文本，每行间保留一个换行符
+    cleaned_text = "\n".join(cleaned_lines)
+    
+    # 使用正则表达式将两个或更多的连续换行替换为一个换行
+    cleaned_text = re.sub(r'\n+', '\n', cleaned_text)
+    
+    # 确保 📌总结、💡要点、🏷️关键词 之前有换行符
+    cleaned_text = re.sub(r'(📌总结)', r'\n\1', cleaned_text)
+    cleaned_text = re.sub(r'(💡要点)', r'\n\1', cleaned_text)
+    cleaned_text = re.sub(r'(🏷️关键词)', r'\n\1', cleaned_text)
+    
+    return cleaned_text
